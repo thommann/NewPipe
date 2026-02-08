@@ -13,6 +13,8 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.util.NO_SERVICE_ID
 import org.schabi.newpipe.util.image.ImageStrategy
 
@@ -49,7 +51,10 @@ data class SubscriptionEntity(
 
     @get:NotificationMode
     @ColumnInfo(name = SUBSCRIPTION_NOTIFICATION_MODE)
-    var notificationMode: Int = 0
+    var notificationMode: Int = 0,
+
+    @ColumnInfo(name = SUBSCRIPTION_ENTITY_TYPE, defaultValue = "0")
+    var entityType: Int = TYPE_CHANNEL
 ) {
     @Ignore
     fun toChannelInfoItem(): ChannelInfoItem {
@@ -60,7 +65,21 @@ data class SubscriptionEntity(
         }
     }
 
+    @Ignore
+    fun toPlaylistInfoItem(): PlaylistInfoItem {
+        return PlaylistInfoItem(this.serviceId, this.url, this.name).apply {
+            thumbnails = ImageStrategy.dbUrlToImageList(this@SubscriptionEntity.avatarUrl)
+            streamCount = this@SubscriptionEntity.subscriberCount ?: -1
+            uploaderName = this@SubscriptionEntity.description
+        }
+    }
+
+    @Ignore
+    fun isPlaylist(): Boolean = entityType == TYPE_PLAYLIST
+
     companion object {
+        const val TYPE_CHANNEL = 0
+        const val TYPE_PLAYLIST = 1
         const val SUBSCRIPTION_UID: String = "uid"
         const val SUBSCRIPTION_TABLE: String = "subscriptions"
         const val SUBSCRIPTION_SERVICE_ID: String = "service_id"
@@ -70,6 +89,7 @@ data class SubscriptionEntity(
         const val SUBSCRIPTION_SUBSCRIBER_COUNT: String = "subscriber_count"
         const val SUBSCRIPTION_DESCRIPTION: String = "description"
         const val SUBSCRIPTION_NOTIFICATION_MODE: String = "notification_mode"
+        const val SUBSCRIPTION_ENTITY_TYPE: String = "entity_type"
 
         @JvmStatic
         @Ignore
@@ -80,7 +100,22 @@ data class SubscriptionEntity(
                 name = info.name,
                 avatarUrl = ImageStrategy.imageListToDbUrl(info.avatars),
                 description = info.description,
-                subscriberCount = info.subscriberCount
+                subscriberCount = info.subscriberCount,
+                entityType = TYPE_CHANNEL
+            )
+        }
+
+        @JvmStatic
+        @Ignore
+        fun from(info: PlaylistInfo): SubscriptionEntity {
+            return SubscriptionEntity(
+                serviceId = info.serviceId,
+                url = info.url,
+                name = info.name,
+                avatarUrl = ImageStrategy.imageListToDbUrl(info.thumbnails),
+                description = info.uploaderName,
+                subscriberCount = info.streamCount,
+                entityType = TYPE_PLAYLIST
             )
         }
     }

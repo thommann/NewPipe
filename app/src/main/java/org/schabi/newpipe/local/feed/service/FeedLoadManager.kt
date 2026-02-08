@@ -23,6 +23,7 @@ import org.schabi.newpipe.extractor.Info
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.feed.FeedInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.ktx.getStringSafe
 import org.schabi.newpipe.local.feed.FeedDatabaseManager
@@ -31,6 +32,7 @@ import org.schabi.newpipe.util.ChannelTabHelper
 import org.schabi.newpipe.util.ExtractorHelper.getChannelInfo
 import org.schabi.newpipe.util.ExtractorHelper.getChannelTab
 import org.schabi.newpipe.util.ExtractorHelper.getMoreChannelTabItems
+import org.schabi.newpipe.util.ExtractorHelper.getPlaylistInfo
 
 class FeedLoadManager(private val context: Context) {
 
@@ -166,6 +168,11 @@ class FeedLoadManager(private val context: Context) {
         }
 
         try {
+            // for playlist subscriptions, use the playlist extractor
+            if (subscriptionEntity.isPlaylist()) {
+                return loadPlaylistStreams(subscriptionEntity, storeOriginalErrorAndRethrow)
+            }
+
             // check for and load new streams
             // either by using the dedicated feed method or by getting the channel info
             var originalInfo: Info? = null
@@ -253,6 +260,31 @@ class FeedLoadManager(private val context: Context) {
             )
             return Notification.createOnError(wrapper)
         }
+    }
+
+    private fun loadPlaylistStreams(
+        subscriptionEntity: SubscriptionEntity,
+        storeOriginalErrorAndRethrow: (Throwable) -> Nothing
+    ): Notification<FeedUpdateInfo> {
+        val playlistInfo = getPlaylistInfo(
+            subscriptionEntity.serviceId,
+            subscriptionEntity.url,
+            true
+        )
+            .onErrorReturn(storeOriginalErrorAndRethrow)
+            .blockingGet()
+
+        val errors = ArrayList<Throwable>(playlistInfo.errors)
+        val streams = playlistInfo.relatedItems.filterIsInstance<StreamInfoItem>()
+
+        return Notification.createOnNext(
+            FeedUpdateInfo(
+                subscriptionEntity,
+                playlistInfo,
+                streams,
+                errors
+            )
+        )
     }
 
     /**

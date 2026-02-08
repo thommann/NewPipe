@@ -14,6 +14,7 @@ import org.schabi.newpipe.database.subscription.SubscriptionDAO
 import org.schabi.newpipe.database.subscription.SubscriptionEntity
 import org.schabi.newpipe.extractor.channel.ChannelInfo
 import org.schabi.newpipe.extractor.channel.tabs.ChannelTabInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.local.feed.FeedDatabaseManager
 import org.schabi.newpipe.local.feed.service.FeedUpdateInfo
@@ -113,6 +114,20 @@ class SubscriptionManager(context: Context) {
         subscriptionTable.update(subscriptionEntity)
     }
 
+    fun updatePlaylistInfo(info: PlaylistInfo): Completable =
+        subscriptionTable.getSubscription(info.serviceId, info.url)
+            .flatMapCompletable {
+                Completable.fromRunnable {
+                    it.apply {
+                        name = info.name
+                        avatarUrl = ImageStrategy.imageListToDbUrl(info.thumbnails)
+                        description = info.uploaderName
+                        subscriberCount = info.streamCount
+                    }
+                    subscriptionTable.update(it)
+                }
+            }
+
     fun deleteSubscription(serviceId: Int, url: String): Completable {
         return Completable.fromCallable { subscriptionTable.deleteSubscription(serviceId, url) }
             .subscribeOn(Schedulers.io())
@@ -128,16 +143,32 @@ class SubscriptionManager(context: Context) {
     }
 
     /**
-     * Fetches the list of videos for the provided channel and saves them in the database, so that
-     * they will be considered as "old"/"already seen" streams and the user will never be notified
-     * about any one of them.
+     * Fetches the list of videos for the provided channel or playlist and saves them in the
+     * database, so that they will be considered as "old"/"already seen" streams and the user
+     * will never be notified about any one of them.
      */
     private fun rememberAllStreams(subscription: SubscriptionEntity): Completable {
+        if (subscription.isPlaylist()) {
+            return rememberAllPlaylistStreams(subscription)
+        }
         return ExtractorHelper.getChannelInfo(subscription.serviceId, subscription.url, false)
             .flatMap { info ->
                 ExtractorHelper.getChannelTab(subscription.serviceId, info.tabs.first(), false)
             }
             .map { channel -> channel.relatedItems.filterIsInstance<StreamInfoItem>().map { stream -> StreamEntity(stream) } }
+            .flatMapCompletable { entities ->
+                Completable.fromAction {
+                    database.streamDAO().upsertAll(entities)
+                }
+            }.onErrorComplete()
+    }
+
+    private fun rememberAllPlaylistStreams(subscription: SubscriptionEntity): Completable {
+        return ExtractorHelper.getPlaylistInfo(subscription.serviceId, subscription.url, false)
+            .map { playlistInfo ->
+                playlistInfo.relatedItems.filterIsInstance<StreamInfoItem>()
+                    .map { stream -> StreamEntity(stream) }
+            }
             .flatMapCompletable { entities ->
                 Completable.fromAction {
                     database.streamDAO().upsertAll(entities)
