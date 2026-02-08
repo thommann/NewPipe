@@ -394,6 +394,17 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
 
         monitorPlaylistSubscription(result);
 
+        // Update the subscription entity with fresh playlist metadata
+        disposables.add(subscriptionManager.updatePlaylistInfo(result)
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(() -> { /* updated */ }, throwable -> {
+                    // Subscription may not exist yet, ignore errors
+                    if (DEBUG) {
+                        Log.d(TAG, "Could not update playlist subscription info", throwable);
+                    }
+                }));
+
         PlayButtonHelper.initPlaylistControlClickListener(activity, playlistControlBinding, this);
     }
 
