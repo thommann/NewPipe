@@ -8,6 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -126,6 +127,13 @@ class DatabaseMigrationTest {
             Migrations.DB_VER_9,
             true,
             Migrations.MIGRATION_8_9
+        )
+
+        testHelper.runMigrationsAndValidate(
+            AppDatabase.DATABASE_NAME,
+            Migrations.DB_VER_10,
+            true,
+            Migrations.MIGRATION_9_10
         )
 
         val migratedDatabaseV3 = getMigratedDatabase()
@@ -335,6 +343,56 @@ class DatabaseMigrationTest {
         assertEquals(2, remoteListFromDB.size)
         assertEquals(remoteUid3, remoteListFromDB[1].uid)
         assertEquals(-1, remoteListFromDB[1].displayIndex)
+    }
+
+    @Test
+    fun migrateDatabaseFrom9to10() {
+        val databaseInV9 = testHelper.createDatabase(AppDatabase.DATABASE_NAME, Migrations.DB_VER_9)
+
+        // Insert a channel subscription (before migration adds entity_type column)
+        databaseInV9.run {
+            insert(
+                "subscriptions",
+                SQLiteDatabase.CONFLICT_FAIL,
+                ContentValues().apply {
+                    put("service_id", DEFAULT_SERVICE_ID)
+                    put("url", DEFAULT_URL)
+                    put("name", "Test Channel")
+                    put("notification_mode", 0)
+                }
+            )
+            insert(
+                "subscriptions",
+                SQLiteDatabase.CONFLICT_FAIL,
+                ContentValues().apply {
+                    put("service_id", DEFAULT_SECOND_SERVICE_ID)
+                    put("url", DEFAULT_SECOND_URL)
+                    put("name", "Test Channel 2")
+                    put("notification_mode", 0)
+                }
+            )
+            close()
+        }
+
+        testHelper.runMigrationsAndValidate(
+            AppDatabase.DATABASE_NAME,
+            Migrations.DB_VER_10,
+            true,
+            Migrations.MIGRATION_9_10
+        )
+
+        val migratedDatabase = getMigratedDatabase()
+        val subscriptions = migratedDatabase.subscriptionDAO().getAll().blockingFirst()
+
+        // Both pre-existing subscriptions should have entity_type = 0 (TYPE_CHANNEL)
+        assertEquals(2, subscriptions.size)
+        for (subscription in subscriptions) {
+            assertEquals(0, subscription.entityType)
+            assertFalse(subscription.isPlaylist())
+        }
+
+        assertEquals("Test Channel", subscriptions[0].name)
+        assertEquals("Test Channel 2", subscriptions[1].name)
     }
 
     private fun getMigratedDatabase(): AppDatabase {
