@@ -29,6 +29,7 @@ import org.schabi.newpipe.NewPipeDatabase;
 import org.schabi.newpipe.R;
 import org.schabi.newpipe.database.playlist.model.PlaylistRemoteEntity;
 import org.schabi.newpipe.database.stream.model.StreamEntity;
+import org.schabi.newpipe.database.subscription.SubscriptionEntity;
 import org.schabi.newpipe.databinding.PlaylistControlBinding;
 import org.schabi.newpipe.databinding.PlaylistHeaderBinding;
 import org.schabi.newpipe.error.ErrorInfo;
@@ -46,6 +47,7 @@ import org.schabi.newpipe.info_list.dialog.InfoItemDialog;
 import org.schabi.newpipe.info_list.dialog.StreamDialogDefaultEntry;
 import org.schabi.newpipe.local.dialog.PlaylistDialog;
 import org.schabi.newpipe.local.playlist.RemotePlaylistManager;
+import org.schabi.newpipe.local.subscription.SubscriptionManager;
 import org.schabi.newpipe.player.playqueue.PlayQueue;
 import org.schabi.newpipe.player.playqueue.PlaylistPlayQueue;
 import org.schabi.newpipe.util.ExtractorHelper;
@@ -63,10 +65,12 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
+import io.reactivex.rxjava3.core.Completable;
 import io.reactivex.rxjava3.core.Flowable;
 import io.reactivex.rxjava3.core.Single;
 import io.reactivex.rxjava3.disposables.CompositeDisposable;
 import io.reactivex.rxjava3.disposables.Disposable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 
 public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, PlaylistInfo>
         implements PlaylistControlViewHolder {
@@ -80,6 +84,10 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
     private RemotePlaylistManager remotePlaylistManager;
     private PlaylistRemoteEntity playlistEntity;
 
+    private SubscriptionManager subscriptionManager;
+    private SubscriptionEntity subscriptionEntity;
+    private AtomicBoolean isSubscribeButtonReady;
+
     /*//////////////////////////////////////////////////////////////////////////
     // Views
     //////////////////////////////////////////////////////////////////////////*/
@@ -88,6 +96,7 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
     private PlaylistControlBinding playlistControlBinding;
 
     private MenuItem playlistBookmarkButton;
+    private MenuItem playlistSubscribeButton;
 
     private long streamCount;
     private long playlistOverallDurationSeconds;
@@ -112,8 +121,10 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
         super.onCreate(savedInstanceState);
         disposables = new CompositeDisposable();
         isBookmarkButtonReady = new AtomicBoolean(false);
+        isSubscribeButtonReady = new AtomicBoolean(false);
         remotePlaylistManager = new RemotePlaylistManager(NewPipeDatabase
                 .getInstance(requireContext()));
+        subscriptionManager = new SubscriptionManager(requireContext());
     }
 
     @Override
@@ -180,6 +191,9 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
 
         playlistBookmarkButton = menu.findItem(R.id.menu_item_bookmark);
         updateBookmarkButtons();
+
+        playlistSubscribeButton = menu.findItem(R.id.menu_item_subscribe);
+        updateSubscribeButton();
     }
 
     @Override
@@ -190,6 +204,9 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
         super.onDestroyView();
         if (isBookmarkButtonReady != null) {
             isBookmarkButtonReady.set(false);
+        }
+        if (isSubscribeButtonReady != null) {
+            isSubscribeButtonReady.set(false);
         }
 
         if (disposables != null) {
@@ -214,6 +231,9 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
         remotePlaylistManager = null;
         playlistEntity = null;
         isBookmarkButtonReady = null;
+        subscriptionManager = null;
+        subscriptionEntity = null;
+        isSubscribeButtonReady = null;
     }
 
     /*//////////////////////////////////////////////////////////////////////////
@@ -245,6 +265,9 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
                 break;
             case R.id.menu_item_bookmark:
                 onBookmarkClicked();
+                break;
+            case R.id.menu_item_subscribe:
+                onSubscribeClicked();
                 break;
             case R.id.menu_item_append_playlist:
                 if (currentInfo != null) {
@@ -368,6 +391,19 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
                 .onBackpressureLatest()
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe(getPlaylistBookmarkSubscriber());
+
+        monitorPlaylistSubscription(result);
+
+        // Update the subscription entity with fresh playlist metadata
+        disposables.add(subscriptionManager.updatePlaylistInfo(result)
+                .subscribeOn(Schedulers.io())
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(() -> { /* updated */ }, throwable -> {
+                    // Subscription may not exist yet, ignore errors
+                    if (DEBUG) {
+                        Log.d(TAG, "Could not update playlist subscription info", throwable);
+                    }
+                }));
 
         PlayButtonHelper.initPlaylistControlClickListener(activity, playlistControlBinding, this);
     }
@@ -495,6 +531,80 @@ public class PlaylistFragment extends BaseListInfoFragment<StreamInfoItem, Playl
 
         playlistBookmarkButton.setIcon(drawable);
         playlistBookmarkButton.setTitle(titleRes);
+    }
+
+    /*//////////////////////////////////////////////////////////////////////////
+    // Playlist Subscription
+    //////////////////////////////////////////////////////////////////////////*/
+
+    private void monitorPlaylistSubscription(final PlaylistInfo info) {
+        if (subscriptionManager == null) {
+            return;
+        }
+
+        disposables.add(subscriptionManager.subscriptionTable()
+                .getSubscriptionFlowable(info.getServiceId(), info.getUrl())
+                .toObservable()
+                .observeOn(AndroidSchedulers.mainThread())
+                .subscribe(subscriptionEntities -> {
+                    subscriptionEntity = subscriptionEntities.isEmpty()
+                            ? null : subscriptionEntities.get(0);
+                    updateSubscribeButton();
+                    isSubscribeButtonReady.set(true);
+                }, throwable -> {
+                    if (DEBUG) {
+                        Log.e(TAG, "Error monitoring playlist subscription", throwable);
+                    }
+                }));
+    }
+
+    private void onSubscribeClicked() {
+        if (isSubscribeButtonReady == null || !isSubscribeButtonReady.get()
+                || subscriptionManager == null) {
+            return;
+        }
+
+        final Disposable action;
+
+        if (currentInfo != null && subscriptionEntity == null) {
+            // Subscribe
+            final SubscriptionEntity newSub = SubscriptionEntity.from(currentInfo);
+            action = Completable.fromAction(() ->
+                            subscriptionManager.insertSubscription(newSub))
+                    .subscribeOn(Schedulers.io())
+                    .observeOn(AndroidSchedulers.mainThread())
+                    .subscribe(() -> { /* will be updated by monitor */ }, throwable ->
+                            showError(new ErrorInfo(throwable,
+                                    UserAction.SUBSCRIPTION_CHANGE,
+                                    "Subscribing to playlist")));
+        } else if (subscriptionEntity != null) {
+            // Unsubscribe
+            action = subscriptionManager.deleteSubscription(
+                            subscriptionEntity.getServiceId(), subscriptionEntity.getUrl())
+                    .subscribe(() -> { /* will be updated by monitor */ }, throwable ->
+                            showError(new ErrorInfo(throwable,
+                                    UserAction.SUBSCRIPTION_CHANGE,
+                                    "Unsubscribing from playlist")));
+        } else {
+            action = Disposable.empty();
+        }
+
+        disposables.add(action);
+    }
+
+    private void updateSubscribeButton() {
+        if (playlistSubscribeButton == null || activity == null) {
+            return;
+        }
+
+        final boolean isSubscribed = subscriptionEntity != null;
+        final int iconRes = isSubscribed
+                ? R.drawable.ic_done : R.drawable.ic_rss_feed;
+        final int titleRes = isSubscribed
+                ? R.string.unsubscribe_playlist : R.string.subscribe_playlist;
+
+        playlistSubscribeButton.setIcon(iconRes);
+        playlistSubscribeButton.setTitle(titleRes);
     }
 
     private void setStreamCountAndOverallDuration(final List<StreamInfoItem> list,

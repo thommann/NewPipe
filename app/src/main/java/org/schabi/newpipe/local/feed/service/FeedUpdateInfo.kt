@@ -4,6 +4,7 @@ import org.schabi.newpipe.database.subscription.NotificationMode
 import org.schabi.newpipe.database.subscription.SubscriptionEntity
 import org.schabi.newpipe.extractor.Info
 import org.schabi.newpipe.extractor.channel.ChannelInfo
+import org.schabi.newpipe.extractor.playlist.PlaylistInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.util.image.ImageStrategy
 
@@ -36,15 +37,23 @@ data class FeedUpdateInfo(
         uid = subscription.uid,
         notificationMode = subscription.notificationMode,
         name = info.name,
-        avatarUrl = (info as? ChannelInfo)?.avatars?.let {
-            // if the newly fetched info is not from fast feed, then it contains updated avatars
-            ImageStrategy.imageListToDbUrl(it)
-        } ?: subscription.avatarUrl,
+        avatarUrl = when (info) {
+            is ChannelInfo -> ImageStrategy.imageListToDbUrl(info.avatars)
+            is PlaylistInfo -> ImageStrategy.imageListToDbUrl(info.thumbnails)
+            else -> subscription.avatarUrl
+        },
         url = info.url,
         serviceId = info.serviceId,
-        // there is no description and subscriberCount in the fast feed
-        description = (info as? ChannelInfo)?.description,
-        subscriberCount = (info as? ChannelInfo)?.subscriberCount,
+        description = when (info) {
+            is ChannelInfo -> info.description
+            is PlaylistInfo -> info.uploaderName
+            else -> null
+        },
+        subscriberCount = when (info) {
+            is ChannelInfo -> info.subscriberCount
+            is PlaylistInfo -> info.streamCount
+            else -> null
+        },
         streams = streams,
         errors = errors
     )

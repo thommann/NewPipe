@@ -18,6 +18,14 @@
         tools:visible="true" />
 
     <item
+        android:id="@+id/menu_item_subscribe"
+        android:icon="@drawable/ic_rss_feed"
+        android:title="@string/subscribe_playlist"
+        android:visible="true"
+        app:showAsAction="ifRoom"
+        tools:visible="true" />
+
+    <item
         android:id="@+id/action_settings"
         android:orderInCategory="1"
         android:title="@string/settings"

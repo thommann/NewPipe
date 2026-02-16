@@ -116,8 +116,12 @@ public class SubscriptionsExportService extends BaseImportExportService {
                     final List<SubscriptionItem> result =
                             new ArrayList<>(subscriptionEntities.size());
                     for (final SubscriptionEntity entity : subscriptionEntities) {
-                        result.add(new SubscriptionItem(entity.getServiceId(), entity.getUrl(),
-                                entity.getName()));
+                        // Only export channel subscriptions; playlist subscriptions
+                        // are not supported by the export format
+                        if (!entity.isPlaylist()) {
+                            result.add(new SubscriptionItem(entity.getServiceId(),
+                                    entity.getUrl(), entity.getName()));
+                        }
                     }
                     return result;
                 })

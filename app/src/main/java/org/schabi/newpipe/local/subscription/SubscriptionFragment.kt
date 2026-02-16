@@ -39,6 +39,7 @@ import org.schabi.newpipe.error.ErrorInfo
 import org.schabi.newpipe.error.UserAction
 import org.schabi.newpipe.extractor.ServiceList
 import org.schabi.newpipe.extractor.channel.ChannelInfoItem
+import org.schabi.newpipe.extractor.playlist.PlaylistInfoItem
 import org.schabi.newpipe.fragments.BaseStateFragment
 import org.schabi.newpipe.ktx.animate
 import org.schabi.newpipe.local.subscription.SubscriptionViewModel.SubscriptionState
@@ -53,6 +54,7 @@ import org.schabi.newpipe.local.subscription.item.FeedGroupCarouselItem
 import org.schabi.newpipe.local.subscription.item.GroupsHeader
 import org.schabi.newpipe.local.subscription.item.Header
 import org.schabi.newpipe.local.subscription.item.ImportSubscriptionsHintPlaceholderItem
+import org.schabi.newpipe.local.subscription.item.PlaylistSubscriptionItem
 import org.schabi.newpipe.local.subscription.services.SubscriptionsExportService
 import org.schabi.newpipe.local.subscription.services.SubscriptionsImportService
 import org.schabi.newpipe.local.subscription.services.SubscriptionsImportService.KEY_MODE
@@ -377,6 +379,47 @@ class SubscriptionFragment : BaseStateFragment<SubscriptionState>() {
         )
     }
 
+    private fun showPlaylistLongTapDialog(selectedItem: PlaylistInfoItem) {
+        val commands = arrayOf(
+            getString(R.string.share),
+            getString(R.string.open_in_browser),
+            getString(R.string.unsubscribe)
+        )
+
+        val actions = DialogInterface.OnClickListener { _, i ->
+            when (i) {
+                0 -> ShareUtils.shareText(
+                    requireContext(),
+                    selectedItem.name,
+                    selectedItem.url,
+                    selectedItem.thumbnails
+                )
+
+                1 -> ShareUtils.openUrlInBrowser(requireContext(), selectedItem.url)
+
+                2 -> deletePlaylistSubscription(selectedItem)
+            }
+        }
+
+        val dialogTitleBinding = DialogTitleBinding.inflate(LayoutInflater.from(requireContext()))
+        dialogTitleBinding.root.isSelected = true
+        dialogTitleBinding.itemTitleView.text = selectedItem.name
+        dialogTitleBinding.itemAdditionalDetails.visibility = View.GONE
+
+        AlertDialog.Builder(requireContext())
+            .setCustomTitle(dialogTitleBinding.root)
+            .setItems(commands, actions)
+            .show()
+    }
+
+    private fun deletePlaylistSubscription(selectedItem: PlaylistInfoItem) {
+        disposables.add(
+            subscriptionManager.deleteSubscription(selectedItem.serviceId, selectedItem.url).subscribe {
+                Toast.makeText(requireContext(), getString(R.string.playlist_unsubscribed), Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
     override fun doInitialLoadLogic() = Unit
     override fun startLoading(forceLoad: Boolean) = Unit
 
@@ -391,18 +434,41 @@ class SubscriptionFragment : BaseStateFragment<SubscriptionState>() {
         override fun held(selectedItem: ChannelInfoItem) = showLongTapDialog(selectedItem)
     }
 
+    private val listenerPlaylistItem = object : OnClickGesture<PlaylistInfoItem> {
+        override fun selected(selectedItem: PlaylistInfoItem) = NavigationHelper.openPlaylistFragment(
+            fm,
+            selectedItem.serviceId,
+            selectedItem.url,
+            selectedItem.name
+        )
+
+        override fun held(selectedItem: PlaylistInfoItem) = showPlaylistLongTapDialog(selectedItem)
+    }
+
     override fun handleResult(result: SubscriptionState) {
         super.handleResult(result)
 
         when (result) {
             is SubscriptionState.LoadedState -> {
+                val useGrid = SubscriptionViewModel.shouldUseGridForSubscription(requireContext())
                 result.subscriptions.forEach {
-                    if (it is ChannelItem) {
-                        it.gesturesListener = listenerChannelItem
-                        it.itemVersion = if (SubscriptionViewModel.shouldUseGridForSubscription(requireContext())) {
-                            ChannelItem.ItemVersion.GRID
-                        } else {
-                            ChannelItem.ItemVersion.MINI
+                    when (it) {
+                        is ChannelItem -> {
+                            it.gesturesListener = listenerChannelItem
+                            it.itemVersion = if (useGrid) {
+                                ChannelItem.ItemVersion.GRID
+                            } else {
+                                ChannelItem.ItemVersion.MINI
+                            }
+                        }
+
+                        is PlaylistSubscriptionItem -> {
+                            it.gesturesListener = listenerPlaylistItem
+                            it.itemVersion = if (useGrid) {
+                                PlaylistSubscriptionItem.ItemVersion.GRID
+                            } else {
+                                PlaylistSubscriptionItem.ItemVersion.MINI
+                            }
                         }
                     }
                 }

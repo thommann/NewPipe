@@ -10,11 +10,13 @@ import io.reactivex.rxjava3.core.Flowable
 import io.reactivex.rxjava3.processors.BehaviorProcessor
 import io.reactivex.rxjava3.schedulers.Schedulers
 import java.util.concurrent.TimeUnit
+import org.schabi.newpipe.database.subscription.SubscriptionEntity
 import org.schabi.newpipe.info_list.ItemViewMode
 import org.schabi.newpipe.local.feed.FeedDatabaseManager
 import org.schabi.newpipe.local.subscription.item.ChannelItem
 import org.schabi.newpipe.local.subscription.item.FeedGroupCardGridItem
 import org.schabi.newpipe.local.subscription.item.FeedGroupCardItem
+import org.schabi.newpipe.local.subscription.item.PlaylistSubscriptionItem
 import org.schabi.newpipe.util.DEFAULT_THROTTLE_TIMEOUT
 import org.schabi.newpipe.util.ThemeHelper.getItemViewMode
 
@@ -54,7 +56,23 @@ class SubscriptionViewModel(application: Application) : AndroidViewModel(applica
 
     private var stateItemsDisposable = subscriptionManager.subscriptions()
         .throttleLatest(DEFAULT_THROTTLE_TIMEOUT, TimeUnit.MILLISECONDS)
-        .map { it.map { entity -> ChannelItem(entity.toChannelInfoItem(), entity.uid, ChannelItem.ItemVersion.MINI) } }
+        .map { entities ->
+            entities.map { entity ->
+                if (entity.isPlaylist()) {
+                    PlaylistSubscriptionItem(
+                        entity.toPlaylistInfoItem(),
+                        entity.uid,
+                        PlaylistSubscriptionItem.ItemVersion.MINI
+                    )
+                } else {
+                    ChannelItem(
+                        entity.toChannelInfoItem(),
+                        entity.uid,
+                        ChannelItem.ItemVersion.MINI
+                    )
+                }
+            }
+        }
         .subscribeOn(Schedulers.io())
         .subscribe(
             { mutableStateLiveData.postValue(SubscriptionState.LoadedState(it)) },
