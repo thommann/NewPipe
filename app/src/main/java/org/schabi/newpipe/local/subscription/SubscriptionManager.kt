@@ -115,19 +115,19 @@ class SubscriptionManager(context: Context) {
         subscriptionTable.update(subscriptionEntity)
     }
 
-    fun updatePlaylistInfo(info: PlaylistInfo): Completable =
-        subscriptionTable.getSubscription(info.serviceId, info.url)
-            .flatMapCompletable {
-                Completable.fromRunnable {
-                    it.apply {
-                        name = info.name
-                        avatarUrl = ImageStrategy.imageListToDbUrl(info.thumbnails)
-                        description = info.uploaderName
-                        subscriberCount = info.streamCount
-                    }
-                    subscriptionTable.update(it)
+    fun updatePlaylistInfo(info: PlaylistInfo): Completable = subscriptionTable
+        .getSubscription(info.serviceId, info.url)
+        .flatMapCompletable {
+            Completable.fromRunnable {
+                it.apply {
+                    name = info.name
+                    avatarUrl = ImageStrategy.imageListToDbUrl(info.thumbnails)
+                    description = info.uploaderName
+                    subscriberCount = info.streamCount
                 }
+                subscriptionTable.update(it)
             }
+        }
 
     fun deleteSubscription(serviceId: Int, url: String): Completable {
         return Completable.fromCallable { subscriptionTable.deleteSubscription(serviceId, url) }
